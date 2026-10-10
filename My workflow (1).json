@@ -1,0 +1,224 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */1 9-10 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 0 11 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        -128
+      ],
+      "id": "600985c4-6eac-4f70-8b3a-f4b678c13056",
+      "name": "Schedule Shipment Check"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// ========================================\n// CURRENT DATE - INDIA TIME\n// ========================================\n\nconst indiaDateString = new Intl.DateTimeFormat(\"en-CA\", {\n  timeZone: \"Asia/Kolkata\",\n  year: \"numeric\",\n  month: \"2-digit\",\n  day: \"2-digit\",\n}).format(new Date());\n\nconst [todayYear, todayMonth, todayDay] = indiaDateString\n  .split(\"-\")\n  .map(Number);\n\nconst today = new Date(\n  todayYear,\n  todayMonth - 1,\n  todayDay\n);\n\ntoday.setHours(0, 0, 0, 0);\n\n\n// ========================================\n// DATE COLUMNS\n// ========================================\n\nconst DATE_COLUMNS = [\n  \"ETD TUT\",\n  \"ETA\",\n  \"ETD\",\n  \"ETA_1\",\n  \"ETD_1\",\n  \"ETA_2\"\n];\n\n\n// ========================================\n// HELPER FUNCTIONS\n// ========================================\n\nfunction isEmpty(value) {\n\n  return (\n    value === undefined ||\n    value === null ||\n    value.toString().trim() === \"\"\n  );\n}\n\n\nfunction normalizeStatus(value) {\n\n  return (value ?? \"\")\n    .toString()\n    .trim()\n    .toUpperCase();\n}\n\n\nfunction parseDate(value) {\n\n  if (isEmpty(value)) {\n    return null;\n  }\n\n\n  // =====================================\n  // EXCEL SERIAL DATE\n  // =====================================\n\n  if (typeof value === \"number\") {\n\n    const excelEpoch = new Date(\n      Date.UTC(1899, 11, 30)\n    );\n\n    const date = new Date(\n      excelEpoch.getTime() +\n      value * 86400000\n    );\n\n    return new Date(\n      date.getUTCFullYear(),\n      date.getUTCMonth(),\n      date.getUTCDate()\n    );\n  }\n\n\n  // =====================================\n  // TEXT DATE\n  // =====================================\n\n  const str = value\n    .toString()\n    .trim();\n\n  let parts = null;\n\n\n  if (str.includes(\".\")) {\n\n    parts = str.split(\".\");\n\n  } else if (str.includes(\"/\")) {\n\n    parts = str.split(\"/\");\n\n  } else if (str.includes(\"-\")) {\n\n    parts = str.split(\"-\");\n\n  }\n\n\n  if (\n    !parts ||\n    parts.length !== 3\n  ) {\n\n    return null;\n  }\n\n\n  let day = Number(parts[0]);\n\n  let month = Number(parts[1]);\n\n  let year = Number(parts[2]);\n\n\n  if (\n    Number.isNaN(day) ||\n    Number.isNaN(month) ||\n    Number.isNaN(year)\n  ) {\n\n    return null;\n  }\n\n\n  if (year < 100) {\n\n    year += 2000;\n\n  }\n\n\n  const date = new Date(\n    year,\n    month - 1,\n    day\n  );\n\n\n  date.setHours(\n    0,\n    0,\n    0,\n    0\n  );\n\n\n  if (\n    date.getFullYear() !== year ||\n    date.getMonth() !== month - 1 ||\n    date.getDate() !== day\n  ) {\n\n    return null;\n\n  }\n\n\n  return date;\n}\n\n\nfunction sameDate(date1, date2) {\n\n  if (\n    !date1 ||\n    !date2\n  ) {\n\n    return false;\n\n  }\n\n\n  return (\n    date1.getTime() ===\n    date2.getTime()\n  );\n}\n\n\nfunction sevenDaysBefore(date) {\n\n  const result = new Date(date);\n\n  result.setDate(\n    result.getDate() - 7\n  );\n\n  result.setHours(\n    0,\n    0,\n    0,\n    0\n  );\n\n  return result;\n}\n\n\nfunction formatDate(date) {\n\n  if (!date) {\n\n    return \"\";\n\n  }\n\n\n  return [\n\n    String(\n      date.getDate()\n    ).padStart(2, \"0\"),\n\n    String(\n      date.getMonth() + 1\n    ).padStart(2, \"0\"),\n\n    date.getFullYear()\n\n  ].join(\"-\");\n}\n\n\n// ========================================\n// FIND RELEVANT SHIPMENT DATE\n// ========================================\n\nfunction getRelevantShipmentDate(row) {\n\n  for (const column of DATE_COLUMNS) {\n\n    const date = parseDate(\n      row[column]\n    );\n\n    if (date) {\n\n      return formatDate(date);\n\n    }\n  }\n\n\n  return \"\";\n}\n\n\n// ========================================\n// CREATE EMAIL TABLE ROW\n// ========================================\n\nfunction createReminderRow(\n  row,\n  reminderDate,\n  reason\n) {\n\n  return {\n\n    DATE: reminderDate,\n\n    SHIPPER:\n      row[\"SHIPPER NAME\"] ?? \"\",\n\n    CARRIER:\n      row[\"CARRIER\"] ?? \"\",\n\n    \"B.NO\":\n      row[\"B.NO\"] ?? \"\",\n\n    \"JOB NO\":\n      row[\"JOB NO / HBL NO\"] ??\n      row[\"JOB NO\"] ??\n      \"\",\n\n    \"MBL NO\":\n      row[\"MBL NO\"] ?? \"\",\n\n    \"CTNR NO\":\n      row[\"CTNR NO\"] ?? \"\",\n\n    REASON:\n      reason\n\n  };\n}\n\n\n// ========================================\n// FIVE EMAIL CATEGORIES\n// ========================================\n\nconst categories = {\n\n\n  HBL: {\n\n    category: \"HBL\",\n\n    title:\n      \"HBL Status Reminder\",\n\n    subject:\n      \"HBL Status Reminder\",\n\n    rows: []\n\n  },\n\n\n  MBL: {\n\n    category: \"MBL\",\n\n    title:\n      \"MBL Status Reminder\",\n\n    subject:\n      \"MBL Status Reminder\",\n\n    rows: []\n\n  },\n\n\n  DATE: {\n\n    category: \"DATE\",\n\n    title:\n      \"Shipment Date Reminder\",\n\n    subject:\n      \"Shipment Date Reminder\",\n\n    rows: []\n\n  },\n\n\n  PREALERT: {\n\n    category: \"PREALERT\",\n\n    title:\n      \"Pre-Alert Reminder\",\n\n    subject:\n      \"Pre-Alert Reminder\",\n\n    rows: []\n\n  },\n\n\n  REVENUE: {\n\n    category: \"REVENUE\",\n\n    title:\n      \"Revenue Reminder\",\n\n    subject:\n      \"Revenue Reminder\",\n\n    rows: []\n\n  }\n\n};\n\n\n// ========================================\n// CHECK EVERY EXCEL ROW\n// ========================================\n\nfor (const item of items) {\n\n\n  const row = item.json;\n\n\n  // =====================================\n  // IGNORE BLANK ROWS\n  // =====================================\n\n  const hasShipmentData =\n\n    !isEmpty(\n      row[\"SHIPPER NAME\"]\n    ) ||\n\n    !isEmpty(\n      row[\"B.NO\"]\n    ) ||\n\n    !isEmpty(\n      row[\"JOB NO / HBL NO\"]\n    ) ||\n\n    !isEmpty(\n      row[\"MBL NO\"]\n    ) ||\n\n    !isEmpty(\n      row[\"CTNR NO\"]\n    );\n\n\n  if (!hasShipmentData) {\n\n    continue;\n\n  }\n\n\n  // =====================================\n  // 1. HBL STATUS\n  // =====================================\n\n  const hblStatus =\n    normalizeStatus(\n      row[\"HBL STATUS\"]\n    );\n\n\n  if (\n    hblStatus !== \"RECEIVED\"\n  ) {\n\n\n    categories.HBL.rows.push(\n\n      createReminderRow(\n\n        row,\n\n        getRelevantShipmentDate(row),\n\n        \"HBL STATUS NOT RELEASED\"\n\n      )\n\n    );\n\n  }\n\n\n  // =====================================\n  // 2. MBL STATUS\n  // =====================================\n\n  const mblStatus =\n    normalizeStatus(\n      row[\"MBL STATUS\"]\n    );\n\n\n  if (\n    mblStatus !== \"RECEIVED\"\n  ) {\n\n\n    categories.MBL.rows.push(\n\n      createReminderRow(\n\n        row,\n\n        getRelevantShipmentDate(row),\n\n        \"MBL STATUS NOT RELEASED\"\n\n      )\n\n    );\n\n  }\n\n\n  // =====================================\n  // 3. TODAY'S SHIPMENT DATE\n  // =====================================\n\n  const matchedDateReasons = [];\n\n\n  for (\n    const column of DATE_COLUMNS\n  ) {\n\n\n    const shipmentDate =\n      parseDate(\n        row[column]\n      );\n\n\n    if (\n      shipmentDate &&\n      sameDate(\n        shipmentDate,\n        today\n      )\n    ) {\n\n\n    matchedDateReasons.push(\n      \"TODAY VESSEL SELLING\"\n    );\n\n    }\n\n  }\n\n\n  if (\n    matchedDateReasons.length > 0\n  ) {\n\n\n    categories.DATE.rows.push(\n\n      createReminderRow(\n\n        row,\n\n        formatDate(today),\n\n        matchedDateReasons.join(\" | \")\n\n      )\n\n    );\n\n  }\n\n\n  // =====================================\n  // 4. PRE-ALERT\n  // =====================================\n\n  const preAlert =\n    row[\"PRE-ALERT\"];\n\n\n  const etdTut =\n    parseDate(\n      row[\"ETD TUT\"]\n    );\n\n\n  if (\n    isEmpty(preAlert) &&\n    etdTut &&\n    sameDate(\n      today,\n      sevenDaysBefore(etdTut)\n    )\n  ) {\n\n\n    categories.PREALERT.rows.push(\n\n      createReminderRow(\n\n        row,\n\n        formatDate(\n          sevenDaysBefore(etdTut)\n        ),\n\n        `PRE-ALERT DUE - ETD TUT - ${formatDate(etdTut)}`\n\n      )\n\n    );\n\n  }\n\n\n  // =====================================\n  // 5. REVENUE\n  // =====================================\n\n  if (\n    isEmpty(\n      row[\"REVENUE\"]\n    )\n  ) {\n\n\n    categories.REVENUE.rows.push(\n\n      createReminderRow(\n\n        row,\n\n        getRelevantShipmentDate(row),\n\n        \"JOB CLOSING PENDING\"\n\n      )\n\n    );\n\n  }\n\n}\n\n\n// ========================================\n// RETURN ONLY CATEGORIES WITH ROWS\n// ========================================\n\nreturn Object\n  .values(categories)\n\n  .filter(\n    category =>\n      category.rows.length > 0\n  )\n\n  .map(\n    category => ({\n\n      json: category\n\n    })\n  );"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        -160
+      ],
+      "id": "fc616878-0f96-4ade-8446-9cca3745adc6",
+      "name": "Validate Shipment Rules"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction escapeHtml(value) {\n  return String(value ?? \"\")\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\"/g, \"&quot;\")\n    .replace(/'/g, \"&#039;\");\n}\n\nconst today = new Intl.DateTimeFormat(\"en-GB\", {\n  timeZone: \"Asia/Kolkata\",\n  day: \"2-digit\",\n  month: \"2-digit\",\n  year: \"numeric\"\n}).format(new Date());\n\nconst output = [];\n\nfor (const item of items) {\n\n  const category = item.json.category;\n  const title = item.json.title;\n  const subject = item.json.subject;\n  const rows = item.json.rows ?? [];\n\n  // Skip empty categories\n  if (rows.length === 0) {\n    continue;\n  }\n\n  let tableRows = \"\";\n\n  for (const row of rows) {\n\n    tableRows += `\n      <tr>\n        <td style=\"border:1px solid #ccc;padding:8px;text-align:center;\">\n          ${escapeHtml(row.DATE)}\n        </td>\n\n        <td style=\"border:1px solid #ccc;padding:8px;\">\n          ${escapeHtml(row.SHIPPER)}\n        </td>\n\n        <td style=\"border:1px solid #ccc;padding:8px;\">\n          ${escapeHtml(row.CARRIER)}\n        </td>\n\n        <td style=\"border:1px solid #ccc;padding:8px;text-align:center;\">\n          ${escapeHtml(row[\"B.NO\"])}\n        </td>\n\n        <td style=\"border:1px solid #ccc;padding:8px;text-align:center;\">\n          ${escapeHtml(row[\"JOB NO\"])}\n        </td>\n\n        <td style=\"border:1px solid #ccc;padding:8px;text-align:center;\">\n          ${escapeHtml(row[\"MBL NO\"])}\n        </td>\n\n        <td style=\"border:1px solid #ccc;padding:8px;text-align:center;\">\n          ${escapeHtml(row[\"CTNR NO\"])}\n        </td>\n\n        <td style=\"\n          border:1px solid #ccc;\n          padding:8px;\n          color:#C00000;\n          font-weight:bold;\n        \">\n          ${escapeHtml(row.REASON)}\n        </td>\n      </tr>\n    `;\n  }\n\n  const html = `\n    <!DOCTYPE html>\n\n    <html>\n\n    <body style=\"\n      font-family:Arial,sans-serif;\n      margin:20px;\n    \">\n\n      <h2 style=\"color:#1F4E78;\">\n        ${escapeHtml(title)}\n      </h2>\n\n      <div style=\"\n        background:#FFF3CD;\n        border:1px solid #FFEEBA;\n        padding:12px;\n        margin-bottom:20px;\n      \">\n\n        <strong>Date:</strong>\n        ${escapeHtml(today)}\n\n        <br><br>\n\n        <strong>Total Reminders:</strong>\n        ${rows.length}\n\n      </div>\n\n      <table style=\"\n        border-collapse:collapse;\n        width:100%;\n        font-size:13px;\n      \">\n\n        <thead>\n\n          <tr style=\"\n            background:#1F4E78;\n            color:white;\n          \">\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              DATE\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              SHIPPER\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              CARRIER\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              B.NO\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              JOB NO\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              MBL NO\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              CTNR NO\n            </th>\n\n            <th style=\"border:1px solid #ccc;padding:8px;\">\n              REASON\n            </th>\n\n          </tr>\n\n        </thead>\n\n        <tbody>\n\n          ${tableRows}\n\n        </tbody>\n\n      </table>\n\n      <br><br>\n\n      Regards,\n\n      <br>\n\n      <strong>Shipment Automation System</strong>\n\n    </body>\n\n    </html>\n  `;\n\n  output.push({\n    json: {\n      category: category,\n      subject: `${subject} - ${today}`,\n      html: html\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        112
+      ],
+      "id": "c96359ef-8ea1-497b-b855-006f53ed07b6",
+      "name": "Generate remainder mail"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst data = $getWorkflowStaticData(\"global\");\n\nconst today = new Intl.DateTimeFormat(\"en-CA\", {\n  timeZone: \"Asia/Kolkata\",\n  year: \"numeric\",\n  month: \"2-digit\",\n  day: \"2-digit\"\n}).format(new Date());\n\nconst output = [];\n\nfor (const item of items) {\n\n  const category = item.json.category;\n\n  if (!category) {\n    continue;\n  }\n\n  const key = `lastSent_${category}`;\n\n  if (data[key] === today) {\n    continue;\n  }\n\n  output.push(item);\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        -160
+      ],
+      "id": "a08490d3-27b1-4244-a89b-fd3d5204f3f4",
+      "name": "Check Daily mail status"
+    },
+    {
+      "parameters": {
+        "fromEmail": "fileautomation2@gmail.com",
+        "toEmail": "subramani.g@dahnay.com,avinashchinmaya.2006@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1248,
+        112
+      ],
+      "id": "72f4d276-1ee3-497f-b60c-d3d2b2ac6244",
+      "name": "Send Shipment Remainder",
+      "webhookId": "2806fd30-d095-4752-8a1e-8b5152090932",
+      "credentials": {
+        "smtp": {
+          "id": "xYuuKSGTLx5pHM6D",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst data = $getWorkflowStaticData(\"global\");\n\nconst today = new Intl.DateTimeFormat(\"en-CA\", {\n  timeZone: \"Asia/Kolkata\",\n  year: \"numeric\",\n  month: \"2-digit\",\n  day: \"2-digit\"\n}).format(new Date());\n\nfor (const item of items) {\n\n  const category = item.json.category;\n\n  if (!category) {\n    continue;\n  }\n\n  const key = `lastSent_${category}`;\n\n  data[key] = today;\n}\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        -144
+      ],
+      "id": "844cc8d6-1b8a-442d-832c-22a26d292662",
+      "name": "Update daily email status"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1ZQ3cTfKDT6H0EpRUMdIPy_16lY31FGrV2n9-PqE-e34",
+          "mode": "list",
+          "cachedResultName": "JOB SHEET",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ZQ3cTfKDT6H0EpRUMdIPy_16lY31FGrV2n9-PqE-e34/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ZQ3cTfKDT6H0EpRUMdIPy_16lY31FGrV2n9-PqE-e34/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        288,
+        96
+      ],
+      "id": "94bee10a-c5b1-4196-891f-b8138f6a1551",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ewNaDUwbHr7dzfmr",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Shipment Check": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Shipment Rules": {
+      "main": [
+        [
+          {
+            "node": "Generate remainder mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate remainder mail": {
+      "main": [
+        [
+          {
+            "node": "Check Daily mail status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Daily mail status": {
+      "main": [
+        [
+          {
+            "node": "Send Shipment Remainder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Shipment Remainder": {
+      "main": [
+        [
+          {
+            "node": "Update daily email status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Validate Shipment Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Kolkata",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "4b193e28-7fe8-441f-a4b2-d2c3880f7a87",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5d7a382af35e2ffd940822e6807f23f26fde60be940449d9e95405a64c1a4bf0"
+  },
+  "nodeGroups": [],
+  "id": "nN4ymLB6PSpEcVmH",
+  "tags": []
+}
